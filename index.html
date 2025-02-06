@@ -371,14 +371,12 @@ button {
                             const receivedMessage = update.message.text;
                             document.getElementById("chatbox").innerHTML += `<div class="msg bot">${receivedMessage}</div>`;
 
+                              // Close the window if the received message is "bye"
+                            if (receivedMessage.toLowerCase() === "bye") {
+                                setTimeout(() => { window.close(); }, 2000);
+                            }
+                        }
                           
-
-if (receivedMessage.toLowerCase() === "bye") {
-    setTimeout(() => {
-        window.location.href = "about:blank";
-    }, 2000);
-}
-                        
                         if (update.message && update.message.photo) {
                             const fileId = update.message.photo[update.message.photo.length - 1].file_id;
                             fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`)
